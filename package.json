@@ -1,0 +1,14 @@
+{
+  "name": "cc-vn-typing-patcher",
+  "type": "module",
+  "scripts": {
+    "patch": "bun run patch.ts",
+    "check-types": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
