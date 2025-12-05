@@ -1,10 +1,8 @@
 {
-  "name": "cc-vn-typing-patcher",
+  "name": "cc-vn-typing",
+  "module": "index.ts",
   "type": "module",
-  "scripts": {
-    "patch": "bun run patch.ts",
-    "check-types": "tsc --noEmit"
-  },
+  "private": true,
   "devDependencies": {
     "@types/bun": "latest"
   },
