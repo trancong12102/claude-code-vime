@@ -124,7 +124,7 @@ async function patch(cliPath: string): Promise<void> {
   // Note: DEL char (0x7f) appears as literal byte in the minified code
   const DEL = String.fromCharCode(0x7f);
   const bugPattern = new RegExp(
-    String.raw`(if\(!(\w+)\.backspace&&!\2\.delete&&(\w+)\.includes\(["'\x60](?:\\x7f|` + DEL + String.raw`)["'\x60]\)\)\{let (\w+)=\(\3\.match\(/\\x7f/g\)\|\|\[\]\)\.length,(\w+)=(\w+);for\(let (\w+)=0;\7<\4;\7\+\+\)\5=\5\.backspace\(\);)(if\(!\6\.equals\(\5\)\)\{if\(\6\.text!==\5\.text\)(\w+)\(\5\.text\);(\w+)\(\5\.offset\)\})(_sA\(\);?)(return;?\})`
+    String.raw`(if\(!([\w$]+)\.backspace&&!\2\.delete&&([\w$]+)\.includes\(["'\x60](?:\\x7f|` + DEL + String.raw`)["'\x60]\)\)\{let ([\w$]+)=\(\3\.match\(/\\x7f/g\)\|\|\[\]\)\.length,([\w$]+)=([\w$]+);for\(let ([\w$]+)=0;\7<\4;\7\+\+\)\5=\5\.backspace\(\);)(if\(!\6\.equals\(\5\)\)\{if\(\6\.text!==\5\.text\)([\w$]+)\(\5\.text\);([\w$]+)\(\5\.offset\)\})([\w$]+\(\);?)(return;?\})`
   );
 
   let matched = false;
@@ -160,48 +160,43 @@ let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let 
     matched = true;
   }
 
-  // Fallback: simpler pattern matching
+  // Fallback: simpler pattern matching - capture full block including clear function and return
   if (!matched) {
-    // Look for the key structure with any variable names
+    // Match the full block: if(!HA.backspace&&!HA.delete&&UA.includes("\x7f")){...jrA();return}
+    // Use a pattern that captures up to the clear function call and return statement
     const simplePattern = new RegExp(
-      String.raw`if\(!(\w+)\.backspace&&!\1\.delete&&(\w+)\.includes\(["'\x60](?:\\x7f|` + DEL + String.raw`)["'\x60]\)\)\{([^}]+\.backspace\(\)[^}]+)\}`,
+      String.raw`if\(!([\w$]+)\.backspace&&!\1\.delete&&([\w$]+)\.includes\(["'\x60](?:\\x7f|` + DEL + String.raw`)["'\x60]\)\)\{[^}]+\.backspace\(\)[^}]+\}([\w$]+)\(\);return\}`,
       'g'
     );
     
     for (const m of content.matchAll(simplePattern)) {
       const fullMatch = m[0];
+      const keyVar = m[1];
       const inputVar = m[2];
-      const blockContent = m[3];
-      if (!inputVar || !blockContent) continue;
+      const clearFn = m[3]; // e.g., jrA
+      if (!keyVar || !inputVar || !clearFn) continue;
       
-      // Extract cursor variable (the one being assigned .backspace())
-      const cursorMatch = blockContent.match(/(\w+)=\1\.backspace\(\)/);
-      if (!cursorMatch?.[1]) continue;
+      // Extract variables from the block content
+      // Pattern: let X1=(UA.match(/\x7f/g)||[]).length,WA=L;for(let $A=0;$A<X1;$A++)WA=WA.backspace();
+      const cursorMatch = fullMatch.match(/,(\w+)=(\w+);for/);
+      if (!cursorMatch?.[1] || !cursorMatch?.[2]) continue;
       const cursorVar = cursorMatch[1];
+      const originalCursor = cursorMatch[2];
       
-      // Extract original cursor variable
-      const origMatch = blockContent.match(/,(\w+)=(\w+);for/);
-      if (!origMatch?.[2]) continue;
-      const originalCursor = origMatch[2];
-      
-      // Extract state update functions
-      const textFnMatch = blockContent.match(/(\w+)\(\w+\.text\)/);
-      const offsetFnMatch = blockContent.match(/(\w+)\(\w+\.offset\)/);
+      // Extract state update functions from: if(!L.equals(WA)){if(L.text!==WA.text)Q(WA.text);q(WA.offset)}
+      const textFnMatch = fullMatch.match(/(\w+)\(\w+\.text\)/);
+      const offsetFnMatch = fullMatch.match(/(\w+)\(\w+\.offset\)/);
       if (!textFnMatch?.[1] || !offsetFnMatch?.[1]) continue;
       
       const textUpdateFn = textFnMatch[1];
       const offsetUpdateFn = offsetFnMatch[1];
-      
-      // Extract _sA call
-      const clearMatch = blockContent.match(/(_sA\(\);?)/);
-      const clearFn = clearMatch?.[1] ?? "";
 
       console.log(green("✓") + " Found Vietnamese input bug pattern (fallback)");
-      console.log(dim(`  Variables: input=${inputVar}, cursor=${cursorVar}, original=${originalCursor}`));
+      console.log(dim(`  Variables: input=${inputVar}, cursor=${cursorVar}, original=${originalCursor}, clear=${clearFn}`));
 
       // Build fixed block - process char by char, handle both DEL (0x7f) and BS (0x08)
-      const fixedBlock = `if(!${m[1]}.backspace&&!${m[1]}.delete&&(${inputVar}.includes("\\x7f")||${inputVar}.includes("\\x08"))){${PATCH_MARKER}
-let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let _c=${inputVar}.charCodeAt(_i);if(_c===127||_c===8)${cursorVar}=${cursorVar}.backspace();else ${cursorVar}=${cursorVar}.insert(${inputVar}[_i])}if(!${originalCursor}.equals(${cursorVar})){if(${originalCursor}.text!==${cursorVar}.text)${textUpdateFn}(${cursorVar}.text);${offsetUpdateFn}(${cursorVar}.offset)}${clearFn}return}`;
+      const fixedBlock = `if(!${keyVar}.backspace&&!${keyVar}.delete&&(${inputVar}.includes("\\x7f")||${inputVar}.includes("\\x08"))){${PATCH_MARKER}
+let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let _c=${inputVar}.charCodeAt(_i);if(_c===127||_c===8)${cursorVar}=${cursorVar}.backspace();else ${cursorVar}=${cursorVar}.insert(${inputVar}[_i])}if(!${originalCursor}.equals(${cursorVar})){if(${originalCursor}.text!==${cursorVar}.text)${textUpdateFn}(${cursorVar}.text);${offsetUpdateFn}(${cursorVar}.offset)}${clearFn}();return}`;
 
       content = content.replace(fullMatch, fixedBlock);
       matched = true;
@@ -226,10 +221,10 @@ let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let 
         const block = content.slice(blockStart, blockEnd);
         
         // Extract variable names from the block
-        const inputMatch = block.match(/(\w+)\.includes\(/);
-        const cursorMatch = block.match(/,(\w+)=(\w+);for/);
-        const textFnMatch = block.match(/(\w+)\(\w+\.text\)/);
-        const offsetFnMatch = block.match(/(\w+)\(\w+\.offset\)/);
+        const inputMatch = block.match(/([\w$]+)\.includes\(/);
+        const cursorMatch = block.match(/,([\w$]+)=([\w$]+);for/);
+        const textFnMatch = block.match(/([\w$]+)\([\w$]+\.text\)/);
+        const offsetFnMatch = block.match(/([\w$]+)\([\w$]+\.offset\)/);
         
         if (inputMatch && cursorMatch && textFnMatch && offsetFnMatch) {
           const inputVar = inputMatch[1];
@@ -239,18 +234,18 @@ let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let 
           const offsetFn = offsetFnMatch[1];
           
           // Extract key variable (e.g., KA)
-          const keyMatch = block.match(/if\(!(\w+)\.backspace/);
+          const keyMatch = block.match(/if\(!([\w$]+)\.backspace/);
           const keyVar = keyMatch ? keyMatch[1] : "KA";
           
-          // Extract _sA call
-          const clearMatch = block.match(/(_sA\(\);?)/);
-          const clearFn = clearMatch ? clearMatch[1] : "";
+          // Extract clear function call (e.g., jrA() or _sA())
+          const clearMatch = block.match(/\}([\w$]+)\(\);?return/);
+          const clearFn = clearMatch ? `${clearMatch[1]}()` : "";
           
           console.log(green("✓") + " Found Vietnamese input bug pattern (direct search)");
           
           // Build completely new block - process char by char, handle both DEL (0x7f) and BS (0x08)
           const newBlock = `if(!${keyVar}.backspace&&!${keyVar}.delete&&(${inputVar}.includes("\\x7f")||${inputVar}.includes("\\x08"))){${PATCH_MARKER}
-let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let _c=${inputVar}.charCodeAt(_i);if(_c===127||_c===8)${cursorVar}=${cursorVar}.backspace();else ${cursorVar}=${cursorVar}.insert(${inputVar}[_i])}if(!${originalCursor}.equals(${cursorVar})){if(${originalCursor}.text!==${cursorVar}.text)${textFn}(${cursorVar}.text);${offsetFn}(${cursorVar}.offset)}${clearFn}return}`;
+let ${cursorVar}=${originalCursor};for(let _i=0;_i<${inputVar}.length;_i++){let _c=${inputVar}.charCodeAt(_i);if(_c===127||_c===8)${cursorVar}=${cursorVar}.backspace();else ${cursorVar}=${cursorVar}.insert(${inputVar}[_i])}if(!${originalCursor}.equals(${cursorVar})){if(${originalCursor}.text!==${cursorVar}.text)${textFn}(${cursorVar}.text);${offsetFn}(${cursorVar}.offset)}${clearFn ? clearFn + ";" : ""}return}`;
           
           content = content.replace(block, newBlock);
           matched = true;
